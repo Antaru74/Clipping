@@ -3,7 +3,7 @@ import json
 import argparse
 import subprocess
 import yt_dlp
-import google.generativeai as genai
+from google import genai
 from faster_whisper import WhisperModel
 
 def download_video(url):
@@ -13,47 +13,51 @@ def download_video(url):
         'outtmpl': 'source_video.mp4',
         'merge_output_format': 'mp4',
         'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'wav', 'preferredquality': '192'}],
-        'keepvideo': True # Simpan video asli, tapi ambil wav-nya juga untuk di-transkrip
+        'keepvideo': True
     }
+    
+    # Membaca cookies untuk menembus blokir bot YouTube
+    if os.path.exists("cookies.txt") and os.path.getsize("cookies.txt") > 0:
+        print("🍪 Menggunakan file cookies.txt untuk bypass YouTube...")
+        ydl_opts['cookiefile'] = 'cookies.txt'
+        
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
     return "source_video.mp4", "source_video.wav"
 
 def transcribe_audio(audio_path):
     print("🤖 Menjalankan AI Whisper (Lokal) untuk transkripsi...")
-    # Menggunakan model 'tiny' agar ringan dan cepat di CPU GitHub Actions
     model = WhisperModel("tiny", device="cpu", compute_type="int8")
     segments, info = model.transcribe(audio_path, beam_size=5)
     
     transcript = ""
     for segment in segments:
-        # Format: [0.00 - 5.00] Halo semua selamat datang...
         transcript += f"[{segment.start:.2f} - {segment.end:.2f}] {segment.text}\n"
-    
     return transcript
 
 def analyze_with_gemini(transcript, prompt, api_key, max_duration):
-    print("🧠 Menganalisa momen viral dengan Google Gemini API...")
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    print("🧠 Menganalisa momen viral dengan Google Gemini API (SDK Baru)...")
+    client = genai.Client(api_key=api_key)
     
     system_instruction = f"""
     Kamu adalah asisten editor video. Berikut adalah transkrip video beserta waktunya (dalam detik).
     Tugas pengguna: "{prompt}".
     Tugasmu: Cari bagian paling menarik/viral dari transkrip yang sesuai dengan tugas pengguna.
-    Durasi maksimal setiap klip adalah {max_duration} detik. Kamu boleh memilih lebih dari 1 klip jika videonya panjang.
+    Durasi maksimal setiap klip adalah {max_duration} detik.
     
-    WAJIB balas HANYA dengan format JSON valid seperti array di bawah ini, tanpa teks pengantar apapun (tanpa markdown ```json):
+    WAJIB balas HANYA dengan format JSON valid seperti array di bawah ini, tanpa markdown ```json:
     [
-      {{"title": "Nama Klip Singkat", "start": 15.5, "end": 45.0}},
-      {{"title": "Klip Lucu", "start": 120.0, "end": 150.0}}
+      {{"title": "Nama Klip Singkat", "start": 15.5, "end": 45.0}}
     ]
     """
     
-    response = model.generate_content(system_instruction + "\n\nTranskrip:\n" + transcript)
+    # Menggunakan model 2.5-flash untuk kecepatan & dukungan SDK baru
+    response = client.models.generate_content(
+        model='gemini-2.5-flash',
+        contents=system_instruction + "\n\nTranskrip:\n" + transcript
+    )
     
     try:
-        # Bersihkan response jika Gemini menyelipkan markdown
         result_text = response.text.strip().replace('```json', '').replace('```', '')
         clips = json.loads(result_text)
         return clips
@@ -75,7 +79,6 @@ def cut_video(video_path, clips):
         
         print(f"🎬 Memproses: {clip['title']} ({start}s - {end}s)")
         
-        # Potong kilat tanpa render ulang menggunakan FFmpeg (stream copy)
         command = [
             "ffmpeg", "-y", "-i", video_path,
             "-ss", str(start), "-t", str(duration),
@@ -91,7 +94,6 @@ if __name__ == "__main__":
     parser.add_argument("--duration", type=int, default=60, help="Max durasi klip")
     args = parser.parse_args()
 
-    # Ambil Gemini API Key dari Environment Variable (GitHub Secrets)
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         print("❌ GEMINI_API_KEY tidak ditemukan!")
@@ -100,7 +102,6 @@ if __name__ == "__main__":
     video_file, audio_file = download_video(args.url)
     transcript = transcribe_audio(audio_file)
     
-    # Jika transkrip kosong, hentikan
     if not transcript.strip():
         print("❌ Tidak ada suara terdeteksi dalam video.")
         exit(1)
