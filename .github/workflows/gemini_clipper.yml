@@ -37,18 +37,23 @@ jobs:
           sudo apt-get autoremove --purge -y && sudo apt-get clean
           sync
 
-      - name: Install System Tools & FFmpeg
+      - name: Install System Tools, Node.js & FFmpeg
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg jq curl python3-pip python3-dev
+          # Menambahkan nodejs untuk mengatasi error JavaScript Runtime
+          sudo apt-get install -y ffmpeg jq curl python3-pip python3-dev nodejs
 
       - name: Install Python Dependencies
         run: |
           pip3 install -r requirements.txt --break-system-packages
 
+      - name: Siapkan YouTube Cookies
+        run: |
+          # Mengambil cookies dari secrets GitHub
+          echo "${{ secrets.YOUTUBE_COOKIES }}" > cookies.txt
+
       - name: Jalankan AI Clipper Mandiri
         run: |
-          # Memanggil file main.py yang ada di repository Anda
           python3 main.py --url "${{ github.event.inputs.video_url }}" --prompt "${{ github.event.inputs.prompt }}" --duration ${{ github.event.inputs.duration }}
 
       - name: Upload Klip ke Gofile
