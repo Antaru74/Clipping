@@ -1,0 +1,67 @@
+name: Gemini Auto Clipper (Gratis)
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: 'Link Video'
+        required: true
+        type: string
+      prompt:
+        description: 'Prompt (Contoh: "Carikan momen orang tertawa paling keras")'
+        required: true
+        default: 'Carikan momen paling lucu atau menarik'
+        type: string
+      duration:
+        description: 'Durasi max per klip (detik)'
+        required: true
+        default: '60'
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      # Daftarkan secret ini di GitHub Settings > Secrets
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Sapu Jagat (Kosongkan Ruang Disk)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift
+          sudo apt-get purge gcc gcc-11 gcc-12 g++ g++-11 g++-12 clang* cmake -y
+          sudo apt-get purge google-chrome-stable firefox microsoft-edge-stable xvfb -y
+          sudo apt-get autoremove --purge -y && sudo apt-get clean
+          sync
+
+      - name: Install System Tools & FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg jq curl python3-pip python3-dev
+
+      - name: Install Python Dependencies
+        run: |
+          pip3 install -r requirements.txt --break-system-packages
+
+      - name: Jalankan AI Clipper Mandiri
+        run: |
+          # Memanggil file main.py yang ada di repository Anda
+          python3 main.py --url "${{ github.event.inputs.video_url }}" --prompt "${{ github.event.inputs.prompt }}" --duration ${{ github.event.inputs.duration }}
+
+      - name: Upload Klip ke Gofile
+        run: |
+          cd output_clips || exit 0
+          for FILE_NAME in *.mp4; do
+            echo "Mengupload: $FILE_NAME"
+            SERVER=$(curl -s [https://api.gofile.io/servers](https://api.gofile.io/servers) | jq -r '.data.servers[0].name')
+            UPLOAD=$(curl -s -X POST -F "file=@${FILE_NAME}" "https://${SERVER}.gofile.io/uploadFile")
+            
+            if [ "$(echo $UPLOAD | jq -r '.status')" == "ok" ]; then
+              echo "✅ Link: $(echo $UPLOAD | jq -r '.data.downloadPage')"
+            else
+              echo "❌ Gagal upload $FILE_NAME"
+            fi
+          done
